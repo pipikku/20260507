@@ -461,9 +461,9 @@ export default function Home() {
                 onChange={(e) => setSort(e.target.value as SortType)}
                 className="rounded-2xl border border-slate-300 px-4 py-3"
               >
+                <option value="due">期限順</option>
                 <option value="new">新しい順</option>
                 <option value="old">古い順</option>
-                <option value="due">期限順</option>
                 <option value="priority">優先度順</option>
               </select>
 

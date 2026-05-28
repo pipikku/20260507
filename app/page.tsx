@@ -20,7 +20,6 @@ type Task = {
   priority: Priority;
   tags: string[];
   estimateMin?: number;
-  actualMin?: number;
   ifCondition?: string;
   thenAction?: string;
 };
@@ -71,6 +70,11 @@ function formatDateTime(timestamp?: number) {
     hour: '2-digit',
     minute: '2-digit',
   }).format(new Date(timestamp));
+}
+
+function getActualMinutes(task: Pick<Task, 'startedAt' | 'completedAt'>) {
+  if (!task.startedAt || !task.completedAt) return undefined;
+  return Math.max(1, Math.round((task.completedAt - task.startedAt) / 60000));
 }
 
 function normalizeCategory(value: unknown): Category {
@@ -124,7 +128,6 @@ export default function Home() {
         priority: normalizePriority(task.priority),
         tags: Array.isArray(task.tags) ? task.tags : [],
         estimateMin: task.estimateMin,
-        actualMin: task.actualMin,
         ifCondition: task.ifCondition,
         thenAction: task.thenAction,
       }));
@@ -188,18 +191,17 @@ export default function Home() {
     const started = tasks.filter((task) => task.startedAt).length;
     const done = tasks.filter((task) => task.done).length;
     const withEstimate = tasks.filter((task) => task.estimateMin).length;
-    const withActual = tasks.filter((task) => task.actualMin).length;
-
     const startRate = total === 0 ? 0 : Math.round((started / total) * 100);
     const completeRate = total === 0 ? 0 : Math.round((done / total) * 100);
 
-    const errorTargets = tasks.filter((task) => task.estimateMin && task.actualMin);
+    const errorTargets = tasks.filter((task) => task.estimateMin && getActualMinutes(task));
     const averageError =
       errorTargets.length === 0
         ? undefined
         : Math.round(
             errorTargets.reduce((sum, task) => {
-              return sum + Math.abs((task.actualMin ?? 0) - (task.estimateMin ?? 0));
+              const actualMin = getActualMinutes(task) ?? 0;
+              return sum + Math.abs(actualMin - (task.estimateMin ?? 0));
             }, 0) / errorTargets.length
           );
 
@@ -208,7 +210,6 @@ export default function Home() {
       started,
       done,
       withEstimate,
-      withActual,
       startRate,
       completeRate,
       averageError,
@@ -287,19 +288,6 @@ export default function Home() {
     );
   }
 
-  function updateActualMin(id: string, value: string) {
-    setTasks((prev) =>
-      prev.map((task) =>
-        task.id === id
-          ? {
-              ...task,
-              actualMin: value === '' ? undefined : Number(value),
-            }
-          : task
-      )
-    );
-  }
-
   function removeTask(id: string) {
     const ok = window.confirm('このタスクを削除しますか？');
     if (!ok) return;
@@ -326,7 +314,7 @@ export default function Home() {
     <main className="min-h-screen bg-slate-100 px-4 py-6 text-slate-900">
       <div className="mx-auto max-w-4xl space-y-5">
         <header className="rounded-3xl bg-white p-5 shadow-sm">
-          <p className="text-sm font-semibold text-blue-600">卒業制作 </p>
+          <p className="text-sm font-semibold text-blue-600">卒業制作 試作版</p>
           <h1 className="mt-1 text-2xl font-bold">タスク管理Webアプリ</h1>
           <p className="mt-2 text-sm leading-6 text-slate-600">
             タスクの見積もり時間、If-Thenプラン、着手・完了ログ、実測時間を記録し、計画が行動につながったかを確認できます。
@@ -508,7 +496,8 @@ export default function Home() {
 
         <section className="space-y-3">
           {filteredTasks.map((task) => {
-            const estimateError = task.estimateMin && task.actualMin ? task.actualMin - task.estimateMin : undefined;
+            const actualMin = getActualMinutes(task);
+            const estimateError = task.estimateMin && actualMin ? actualMin - task.estimateMin : undefined;
 
             return (
               <article key={task.id} className="rounded-3xl bg-white p-5 shadow-sm">
@@ -530,6 +519,7 @@ export default function Home() {
                 <div className="mt-4 grid gap-2 text-sm text-slate-600 sm:grid-cols-2">
                   <p>期限：{task.due ?? '期限なし'}</p>
                   <p>見積もり：{formatMinutes(task.estimateMin)}</p>
+                  <p>実際にかかった時間：{formatMinutes(actualMin)}</p>
                   <p>着手：{formatDateTime(task.startedAt)}</p>
                   <p>完了：{formatDateTime(task.completedAt)}</p>
                 </div>
@@ -552,23 +542,7 @@ export default function Home() {
                   </div>
                 )}
 
-                <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto_auto]">
-                  <label className="grid gap-1 text-sm font-medium text-slate-700">
-                    実際にかかった時間
-                    <select
-                      value={task.actualMin ?? ''}
-                      onChange={(e) => updateActualMin(task.id, e.target.value)}
-                      className="rounded-2xl border border-slate-300 px-4 py-3"
-                    >
-                      <option value="">未記録</option>
-                      {minuteOptions.map((m) => (
-                        <option key={m} value={m}>
-                          {formatMinutes(m)}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
                   <button onClick={() => startTask(task.id)} className="rounded-2xl bg-slate-900 px-4 py-3 font-bold text-white">
                     着手
                   </button>
@@ -620,4 +594,3 @@ export default function Home() {
     </main>
   );
 }
-

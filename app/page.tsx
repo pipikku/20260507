@@ -104,9 +104,9 @@ export default function Home() {
   const [thenAction, setThenAction] = useState('');
 
   const [query, setQuery] = useState('');
-  const [sort, setSort] = useState<SortType>('new');
+  const [sort, setSort] = useState<SortType>('due');
   const [filterCategory, setFilterCategory] = useState<'all' | Category>('all');
-  const [showDone, setShowDone] = useState(true);
+ const [showDone, setShowDone] = useState(false);
 
   const minuteOptions = useMemo(() => buildMinuteOptions(10, 8 * 60), []);
 

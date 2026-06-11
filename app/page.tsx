@@ -3,9 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 
 type Category = '課題' | '自習' | 'アルバイト' | 'トレーニング' | 'その他';
-
 type SortType = 'new' | 'old' | 'due' | 'priority';
-
 type Priority = '高' | '中' | '低';
 
 type Task = {
@@ -24,7 +22,7 @@ type Task = {
   thenAction?: string;
 };
 
-const STORAGE_KEY = 'graduation_task_app_prototype_v1';
+const STORAGE_KEY = 'graduation_task_app_prototype_v4';
 
 const CATEGORY_OPTIONS: Category[] = ['課題', '自習', 'アルバイト', 'トレーニング', 'その他'];
 const PRIORITY_OPTIONS: Priority[] = ['高', '中', '低'];
@@ -54,7 +52,7 @@ function buildMinuteOptions(step = 10, maxMin = 8 * 60) {
 }
 
 function formatMinutes(min?: number) {
-  if (!min) return '未設定';
+  if (!min) return '未記録';
   const h = Math.floor(min / 60);
   const m = min % 60;
   if (h === 0) return `${m}分`;
@@ -62,9 +60,12 @@ function formatMinutes(min?: number) {
   return `${h}時間${m}分`;
 }
 
-function formatDateTime(timestamp?: number) {
+function formatJST(timestamp?: number) {
   if (!timestamp) return '未記録';
+
   return new Intl.DateTimeFormat('ja-JP', {
+    timeZone: 'Asia/Tokyo',
+    year: 'numeric',
     month: '2-digit',
     day: '2-digit',
     hour: '2-digit',
@@ -91,6 +92,11 @@ function getPriorityScore(priority: Priority) {
   return 1;
 }
 
+function escapeCsv(value: string | number | null | undefined) {
+  if (value === null || value === undefined) return '';
+  return `"${String(value).replace(/"/g, '""')}"`;
+}
+
 export default function Home() {
   const [tasks, setTasks] = useState<Task[]>([]);
 
@@ -106,7 +112,7 @@ export default function Home() {
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState<SortType>('due');
   const [filterCategory, setFilterCategory] = useState<'all' | Category>('all');
- const [showDone, setShowDone] = useState(false);
+  const [showDone, setShowDone] = useState(false);
 
   const minuteOptions = useMemo(() => buildMinuteOptions(10, 8 * 60), []);
 
@@ -116,6 +122,7 @@ export default function Home() {
       if (!raw) return;
 
       const parsed = JSON.parse(raw) as Partial<Task>[];
+
       const normalized: Task[] = parsed.map((task) => ({
         id: task.id ?? uid(),
         title: task.title ?? '',
@@ -158,6 +165,7 @@ export default function Home() {
         ]
           .join(' ')
           .toLowerCase();
+
         return text.includes(q);
       });
     }
@@ -174,7 +182,9 @@ export default function Home() {
 
     if (sort === 'new') sorted.sort((a, b) => b.createdAt - a.createdAt);
     if (sort === 'old') sorted.sort((a, b) => a.createdAt - b.createdAt);
-    if (sort === 'priority') sorted.sort((a, b) => getPriorityScore(b.priority) - getPriorityScore(a.priority));
+    if (sort === 'priority') {
+      sorted.sort((a, b) => getPriorityScore(b.priority) - getPriorityScore(a.priority));
+    }
     if (sort === 'due') {
       sorted.sort((a, b) => {
         const ad = a.due ?? '9999-12-31';
@@ -190,11 +200,12 @@ export default function Home() {
     const total = tasks.length;
     const started = tasks.filter((task) => task.startedAt).length;
     const done = tasks.filter((task) => task.done).length;
-    const withEstimate = tasks.filter((task) => task.estimateMin).length;
+
     const startRate = total === 0 ? 0 : Math.round((started / total) * 100);
     const completeRate = total === 0 ? 0 : Math.round((done / total) * 100);
 
     const errorTargets = tasks.filter((task) => task.estimateMin && getActualMinutes(task));
+
     const averageError =
       errorTargets.length === 0
         ? undefined
@@ -209,7 +220,6 @@ export default function Home() {
       total,
       started,
       done,
-      withEstimate,
       startRate,
       completeRate,
       averageError,
@@ -260,14 +270,16 @@ export default function Home() {
   }
 
   function completeTask(id: string) {
+    const now = Date.now();
+
     setTasks((prev) =>
       prev.map((task) =>
         task.id === id
           ? {
               ...task,
               done: true,
-              startedAt: task.startedAt ?? Date.now(),
-              completedAt: task.completedAt ?? Date.now(),
+              startedAt: task.startedAt ?? now,
+              completedAt: now,
             }
           : task
       )
@@ -300,14 +312,73 @@ export default function Home() {
     setTasks((prev) => prev.filter((task) => !task.done));
   }
 
-  function exportJson() {
-    const blob = new Blob([JSON.stringify(tasks, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
+  function exportCsv() {
+    if (tasks.length === 0) {
+      alert('出力するログがありません。');
+      return;
+    }
+
+    const headers = [
+      'タスク名',
+      '完了状態',
+      'カテゴリ',
+      '優先度',
+      '期限',
+      '見積もり時間_分',
+      '実際の作業時間_分',
+      '見積もりとの差_分',
+      '絶対誤差_分',
+      'If条件',
+      'Then行動',
+      '作成日時_日本時間',
+      '着手日時_日本時間',
+      '完了日時_日本時間',
+    ];
+
+    const rows = tasks.map((task) => {
+      const actualMin = getActualMinutes(task);
+      const estimateError =
+        task.estimateMin && actualMin !== undefined ? actualMin - task.estimateMin : undefined;
+
+      return [
+        task.title,
+        task.done ? '完了' : '未完了',
+        task.category,
+        task.priority,
+        task.due ?? '',
+        task.estimateMin ?? '',
+        actualMin ?? '',
+        estimateError ?? '',
+        estimateError === undefined ? '' : Math.abs(estimateError),
+        task.ifCondition ?? '',
+        task.thenAction ?? '',
+        formatJST(task.createdAt),
+        formatJST(task.startedAt),
+        formatJST(task.completedAt),
+      ];
+    });
+
+    const csvText =
+      '\uFEFF' +
+      [
+        headers.map(escapeCsv).join(','),
+        ...rows.map((row) => row.map(escapeCsv).join(',')),
+      ].join('\r\n');
+
+    const blob = new Blob([csvText], {
+      type: 'text/csv;charset=utf-8;',
+    });
+
+    const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
+
     a.href = url;
-    a.download = 'task-log.json';
+    a.download = 'task-log-readable-jst.csv';
+    document.body.appendChild(a);
     a.click();
-    URL.revokeObjectURL(url);
+    document.body.removeChild(a);
+
+    window.URL.revokeObjectURL(url);
   }
 
   return (
@@ -317,7 +388,7 @@ export default function Home() {
           <p className="text-sm font-semibold text-blue-600">卒業制作 試作版</p>
           <h1 className="mt-1 text-2xl font-bold">タスク管理Webアプリ</h1>
           <p className="mt-2 text-sm leading-6 text-slate-600">
-            タスクの見積もり時間、If-Thenプラン、着手・完了ログ、実測時間を記録し、計画が行動につながったかを確認できます。
+            タスクの見積もり時間、If-Thenプラン、着手・完了ログを記録し、計画が行動につながったかを確認できます。
           </p>
         </header>
 
@@ -326,17 +397,22 @@ export default function Home() {
             <p className="text-xs text-slate-500">総タスク</p>
             <p className="mt-1 text-2xl font-bold">{summary.total}</p>
           </div>
+
           <div className="rounded-2xl bg-white p-4 shadow-sm">
             <p className="text-xs text-slate-500">着手率</p>
             <p className="mt-1 text-2xl font-bold">{summary.startRate}%</p>
           </div>
+
           <div className="rounded-2xl bg-white p-4 shadow-sm">
             <p className="text-xs text-slate-500">完了率</p>
             <p className="mt-1 text-2xl font-bold">{summary.completeRate}%</p>
           </div>
+
           <div className="rounded-2xl bg-white p-4 shadow-sm">
             <p className="text-xs text-slate-500">平均見積もり誤差</p>
-            <p className="mt-1 text-2xl font-bold">{summary.averageError === undefined ? '-' : `${summary.averageError}分`}</p>
+            <p className="mt-1 text-2xl font-bold">
+              {summary.averageError === undefined ? '-' : `${summary.averageError}分`}
+            </p>
           </div>
         </section>
 
@@ -428,6 +504,7 @@ export default function Home() {
                   placeholder="If：例 授業が終わったら"
                   className="rounded-2xl border border-blue-200 px-4 py-3 outline-none focus:border-blue-500"
                 />
+
                 <input
                   value={thenAction}
                   onChange={(e) => setThenAction(e.target.value)}
@@ -484,11 +561,11 @@ export default function Home() {
                 onClick={() => setShowDone((prev) => !prev)}
                 className="rounded-2xl border border-slate-300 px-4 py-3 font-semibold"
               >
-                {showDone ? '完了も表示' : '未完了のみ'}
+                {showDone ? '完了タスクも表示中' : '未完了のみ表示中'}
               </button>
 
-              <button onClick={exportJson} className="rounded-2xl border border-slate-300 px-4 py-3 font-semibold">
-                ログ出力
+              <button onClick={exportCsv} className="rounded-2xl border border-slate-300 px-4 py-3 font-semibold">
+                CSV出力
               </button>
             </div>
           </div>
@@ -504,14 +581,30 @@ export default function Home() {
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold">{task.category}</span>
-                      <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold">優先度：{task.priority}</span>
-                      {task.done && <span className="rounded-full bg-green-100 px-3 py-1 text-xs font-bold text-green-700">完了</span>}
+                      <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold">
+                        {task.category}
+                      </span>
+
+                      <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold">
+                        優先度：{task.priority}
+                      </span>
+
+                      {task.done && (
+                        <span className="rounded-full bg-green-100 px-3 py-1 text-xs font-bold text-green-700">
+                          完了
+                        </span>
+                      )}
                     </div>
-                    <h3 className={`mt-3 text-lg font-bold ${task.done ? 'text-slate-400 line-through' : ''}`}>{task.title}</h3>
+
+                    <h3 className={`mt-3 text-lg font-bold ${task.done ? 'text-slate-400 line-through' : ''}`}>
+                      {task.title}
+                    </h3>
                   </div>
 
-                  <button onClick={() => removeTask(task.id)} className="rounded-xl px-3 py-2 text-sm font-bold text-red-600">
+                  <button
+                    onClick={() => removeTask(task.id)}
+                    className="rounded-xl px-3 py-2 text-sm font-bold text-red-600"
+                  >
                     削除
                   </button>
                 </div>
@@ -519,9 +612,13 @@ export default function Home() {
                 <div className="mt-4 grid gap-2 text-sm text-slate-600 sm:grid-cols-2">
                   <p>期限：{task.due ?? '期限なし'}</p>
                   <p>見積もり：{formatMinutes(task.estimateMin)}</p>
+                  <p>着手：{formatJST(task.startedAt)}</p>
+                  <p>完了：{formatJST(task.completedAt)}</p>
                   <p>実際にかかった時間：{formatMinutes(actualMin)}</p>
-                  <p>着手：{formatDateTime(task.startedAt)}</p>
-                  <p>完了：{formatDateTime(task.completedAt)}</p>
+                  <p>
+                    見積もりとの差：
+                    {estimateError === undefined ? '未計算' : `${estimateError > 0 ? '+' : ''}${estimateError}分`}
+                  </p>
                 </div>
 
                 {(task.ifCondition || task.thenAction) && (
@@ -543,42 +640,48 @@ export default function Home() {
                 )}
 
                 <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                  <button onClick={() => startTask(task.id)} className="rounded-2xl bg-slate-900 px-4 py-3 font-bold text-white">
+                  <button
+                    onClick={() => startTask(task.id)}
+                    className="rounded-2xl bg-slate-900 px-4 py-3 font-bold text-white"
+                  >
                     着手
                   </button>
 
                   {task.done ? (
-                    <button onClick={() => reopenTask(task.id)} className="rounded-2xl border border-slate-300 px-4 py-3 font-bold">
+                    <button
+                      onClick={() => reopenTask(task.id)}
+                      className="rounded-2xl border border-slate-300 px-4 py-3 font-bold"
+                    >
                       未完了に戻す
                     </button>
                   ) : (
-                    <button onClick={() => completeTask(task.id)} className="rounded-2xl bg-green-600 px-4 py-3 font-bold text-white">
+                    <button
+                      onClick={() => completeTask(task.id)}
+                      className="rounded-2xl bg-green-600 px-4 py-3 font-bold text-white"
+                    >
                       完了
                     </button>
                   )}
                 </div>
-
-                {estimateError !== undefined && (
-                  <p className="mt-3 text-sm font-semibold text-slate-700">
-                    見積もりとの差：{estimateError > 0 ? '+' : ''}
-                    {estimateError}分
-                  </p>
-                )}
               </article>
             );
           })}
 
           {filteredTasks.length === 0 && (
-            <div className="rounded-3xl bg-white p-8 text-center text-slate-500 shadow-sm">該当するタスクがありません。</div>
+            <div className="rounded-3xl bg-white p-8 text-center text-slate-500 shadow-sm">
+              該当するタスクがありません。
+            </div>
           )}
         </section>
 
         <section className="rounded-3xl bg-white p-5 shadow-sm">
           <h2 className="text-lg font-bold">管理</h2>
+
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
             <button onClick={clearDone} className="rounded-2xl border border-slate-300 px-4 py-3 font-bold">
               完了済みを一括削除
             </button>
+
             <button
               onClick={() => {
                 const ok = window.confirm('全データを削除しますか？');

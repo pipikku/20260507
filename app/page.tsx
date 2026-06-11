@@ -61,7 +61,7 @@ function formatMinutes(min?: number) {
 }
 
 function formatJST(timestamp?: number) {
-  if (!timestamp) return '未記録';
+  if (!timestamp) return '';
 
   return new Intl.DateTimeFormat('ja-JP', {
     timeZone: 'Asia/Tokyo',
@@ -90,11 +90,6 @@ function getPriorityScore(priority: Priority) {
   if (priority === '高') return 3;
   if (priority === '中') return 2;
   return 1;
-}
-
-function escapeCsv(value: string | number | null | undefined) {
-  if (value === null || value === undefined) return '';
-  return `"${String(value).replace(/"/g, '""')}"`;
 }
 
 export default function Home() {
@@ -312,8 +307,29 @@ export default function Home() {
     setTasks((prev) => prev.filter((task) => !task.done));
   }
 
+  function buildCsvData() {
+    return tasks.map((task) => {
+      const actualMin = getActualMinutes(task);
+      const estimateError =
+        task.estimateMin && actualMin !== undefined ? actualMin - task.estimateMin : undefined;
+
+      return {
+        タスク名: task.title,
+        見積もり時間_分: task.estimateMin ?? '',
+        実際の作業時間_分: actualMin ?? '',
+        見積もりとの差_分: estimateError ?? '',
+        絶対誤差_分: estimateError === undefined ? '' : Math.abs(estimateError),
+        作成日時_日本時間: formatJST(task.createdAt),
+        着手日時_日本時間: formatJST(task.startedAt),
+        完了日時_日本時間: formatJST(task.completedAt),
+      };
+    });
+  }
+
   function exportCsv() {
-    if (tasks.length === 0) {
+    const exportData = buildCsvData();
+
+    if (exportData.length === 0) {
       alert('出力するログがありません。');
       return;
     }
@@ -327,52 +343,36 @@ export default function Home() {
       '作成日時_日本時間',
       '着手日時_日本時間',
       '完了日時_日本時間',
+    ] as const;
+
+    const csvRows = [
+      headers.join(','),
+      ...exportData.map((row) =>
+        headers
+          .map((header) => {
+            const value = row[header];
+            return `"${String(value).replace(/"/g, '""')}"`;
+          })
+          .join(',')
+      ),
     ];
 
-    const rows = tasks.map((task) => {
-      const actualMin = getActualMinutes(task);
-      const estimateError =
-        task.estimateMin && actualMin !== undefined ? actualMin - task.estimateMin : undefined;
-
-      return [
-        task.title,
-        task.done ? '完了' : '未完了',
-        task.category,
-        task.priority,
-        task.due ?? '',
-        task.estimateMin ?? '',
-        actualMin ?? '',
-        estimateError ?? '',
-        estimateError === undefined ? '' : Math.abs(estimateError),
-        task.ifCondition ?? '',
-        task.thenAction ?? '',
-        formatJST(task.createdAt),
-        formatJST(task.startedAt),
-        formatJST(task.completedAt),
-      ];
-    });
-
-    const csvText =
-      '\uFEFF' +
-      [
-        headers.map(escapeCsv).join(','),
-        ...rows.map((row) => row.map(escapeCsv).join(',')),
-      ].join('\r\n');
+    const csvText = '\uFEFF' + csvRows.join('\r\n');
 
     const blob = new Blob([csvText], {
       type: 'text/csv;charset=utf-8;',
     });
 
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
 
-    a.href = url;
-    a.download = 'task-log-readable-jst.csv';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    link.href = url;
+    link.download = 'task-log.csv';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
 
-    window.URL.revokeObjectURL(url);
+    URL.revokeObjectURL(url);
   }
 
   return (
@@ -558,7 +558,10 @@ export default function Home() {
                 {showDone ? '完了タスクも表示中' : '未完了のみ表示中'}
               </button>
 
-              <button onClick={exportCsv} className="rounded-2xl border border-slate-300 px-4 py-3 font-semibold">
+              <button
+                onClick={exportCsv}
+                className="rounded-2xl border border-slate-300 px-4 py-3 font-semibold"
+              >
                 CSV出力
               </button>
             </div>
@@ -606,8 +609,8 @@ export default function Home() {
                 <div className="mt-4 grid gap-2 text-sm text-slate-600 sm:grid-cols-2">
                   <p>期限：{task.due ?? '期限なし'}</p>
                   <p>見積もり：{formatMinutes(task.estimateMin)}</p>
-                  <p>着手：{formatJST(task.startedAt)}</p>
-                  <p>完了：{formatJST(task.completedAt)}</p>
+                  <p>着手：{formatJST(task.startedAt) || '未記録'}</p>
+                  <p>完了：{formatJST(task.completedAt) || '未記録'}</p>
                   <p>実際にかかった時間：{formatMinutes(actualMin)}</p>
                   <p>
                     見積もりとの差：
